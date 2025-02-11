@@ -251,9 +251,11 @@ public class GameServer
     }
     public static async Task BroadcastClientDisconnect(Socket disconnectedClientSocket)
     {
-        string disconnectMessage = $"客户端 {disconnectedClientSocket.RemoteEndPoint}___{ClientIds[disconnectedClientSocket]}  已断开连接";
+        NetworkMessageType _type = NetworkMessageType.ClientDisconnect;
+        string disconnectMessage = $"客户端已断开连接 {disconnectedClientSocket.RemoteEndPoint}___{ClientIds[disconnectedClientSocket]}";
         byte[] messageBytes = Encoding.UTF8.GetBytes(disconnectMessage);
-        byte[] combinedMessage = PrepareMessage(disconnectMessage); 
+        NetworkMessage disconnectMsg = new NetworkMessage(_type, messageBytes);
+        byte[] combinedMessage = PrepareNetworkMessage(disconnectMsg);
 
         Log(" ------------------------客户端断开------------------------");
         foreach (var kvp in Clients)
@@ -303,7 +305,6 @@ public class GameServer
 
         return combinedMessage;
     }
-
     public static byte[] PrepareNetworkMessage(NetworkMessage networkMessage)
     {
         byte[] header = Encoding.UTF8.GetBytes("HEADER");
@@ -453,7 +454,9 @@ public enum NetworkMessageType
 {
     PositionUpdate,
     CharacterAction,
-    ObjectSpawn
+    ObjectSpawn,
+
+    ClientDisconnect
 }
 
 
