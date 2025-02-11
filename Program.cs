@@ -22,6 +22,10 @@ public class GameServer
     private const int maxClientCount = 30;
     private static readonly string LogFilePath = "server_log.txt"; // 日志文件路径
 
+    private static readonly ConcurrentQueue<NetworkMessage> MessageQueue = new();  
+    private static readonly int FrameRate = 60;
+
+
     public static async Task Main(string[] args)
     {
         Console.CancelKeyPress += async (sender, e) =>
@@ -29,9 +33,39 @@ public class GameServer
             e.Cancel = true; // 防止程序直接退出
             await ShutdownServer();
         };
+        //await StartServer();
+        Task startServerTask = StartServer();
 
-        await StartServer();
+
+        int frameInterval = (int)(1000 / FrameRate);
+        while (true)
+        {
+            await Task.Delay(frameInterval);
+           
+            await ProcessQueuedMessages();
+        }
     }
+    public static async Task ProcessQueuedMessages()
+    {
+        while (true)
+        {
+            if (!MessageQueue.IsEmpty)
+            {
+                var tasks = new List<Task>();
+                while (MessageQueue.TryDequeue(out NetworkMessage networkMessage))
+                {
+                    tasks.Add(BroadcastNetworkMessage(null, networkMessage));
+                }
+                Log($"MessageQueue  tasksCount : {tasks.Count} ");
+
+                await Task.WhenAll(tasks);  
+            }
+
+            await Task.Delay(10); 
+        }
+    }
+
+
 
     public static async Task StartServer()
     {
@@ -151,8 +185,12 @@ public class GameServer
                     }
                     else
                     {
-                        // 处理其他类型的消息
-                        await ProcessMessage(clientSocket, body);
+                        if (TryParseNetworkMessage(body, out NetworkMessage networkMessage))
+                        {
+                            Log($"收到来自客户端 {clientSocket.RemoteEndPoint}___{ClientIds[clientSocket]} NetworkMessage: 类型={networkMessage.MessageType}");
+                            MessageQueue.Enqueue(networkMessage); 
+                        }
+                        //await ProcessMessage(clientSocket, body);
                     }
                 }
             }
@@ -221,7 +259,7 @@ public class GameServer
     {
         byte[] combinedMessage = PrepareNetworkMessage(networkMessage);
 
-        //Log(" ------------------------广播开始------------------------");
+        Log(" ------------------------广播开始------------------------");
         var tasks = new List<Task>();
         foreach (var kvp in Clients)
         {
@@ -399,20 +437,6 @@ public class GameServer
     }
 
 
-
-    public static void Log(string message)
-    {
-        try
-        {
-            Console.WriteLine($"[{DateTime.Now}] {message}");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"日志输出失败: {ex.Message}");
-        }
-    }
-
-
     public static bool TryParseNetworkMessage(byte[] message, out NetworkMessage networkMessage)
     {
         try
@@ -436,6 +460,28 @@ public class GameServer
             return false;
         }
     }
+
+
+
+    private static readonly object logLock = new object();
+    public static void Log(string message)
+    {
+        lock (logLock)
+        {
+            try
+            {
+                string logMessage = $"[{DateTime.Now}] {message}";
+                Console.WriteLine(logMessage);
+                //File.AppendAllText(LogFilePath, logMessage + Environment.NewLine);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"日志输出失败: {ex.Message}");
+            }
+        }
+    }
+
+
 }
 
 public class NetworkMessage
