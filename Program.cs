@@ -25,6 +25,11 @@ public class GameServer
     private static readonly int FrameRate = 60;
 
 
+    private static readonly ConcurrentDictionary<string, Room> Rooms = new(); // 存储所有房间
+    private static readonly ConcurrentDictionary<Socket, string> ClientRooms = new(); // 存储每个客户端所在的房间
+
+
+
     public static async Task Main(string[] args)
     {
         Console.CancelKeyPress += async (sender, e) =>
@@ -314,6 +319,74 @@ public class GameServer
 
 
 
+    #region 房间管理
+    public static void JoinRoom(Socket clientSocket, string roomId)
+    {
+        if (!Rooms.ContainsKey(roomId))
+        {
+            Rooms[roomId] = new Room(roomId);  // 创建新房间
+            Log($"房间 {roomId} 不存在 , 创建房间 .");
+        }
+
+        // 将客户端加入到房间
+        Rooms[roomId].AddClient(clientSocket);
+        ClientRooms[clientSocket] = roomId;  // 记录客户端所属的房间
+        Log($"客户端 {clientSocket.RemoteEndPoint} 已加入房间 {roomId}");
+    }
+
+    public static bool LeaveRoom(Socket clientSocket)
+    {
+        if (!ClientRooms.ContainsKey(clientSocket))
+        {
+            Log($"客户端 {clientSocket.RemoteEndPoint} 没有加入任何房间.");
+            return false;  // 客户端没有加入房间
+        }
+
+        string roomId = ClientRooms[clientSocket];
+        var room = Rooms[roomId];
+
+        room.RemoveClient(clientSocket);  // 从房间中移除客户端
+        ClientRooms.TryRemove(clientSocket, out _);  // 移除客户端的房间记录
+        clientSocket.Close();  // 关闭客户端连接（可以选择是否关闭连接）
+
+        Log($"客户端 {clientSocket.RemoteEndPoint} 已离开房间 {roomId}");
+        return true;  // 成功离开房间
+    }
+
+    public static bool SwitchRoom(Socket clientSocket, string newRoomId)
+    {
+        if (!ClientRooms.ContainsKey(clientSocket))
+        {
+            Log($"客户端 {clientSocket.RemoteEndPoint} 没有加入任何房间，无法切换场景。");
+            return false;
+        }
+
+        // 获取当前客户端所在的房间
+        string currentRoomId = ClientRooms[clientSocket];
+        var currentRoom = Rooms[currentRoomId];
+
+        // 从当前房间移除客户端
+        currentRoom.RemoveClient(clientSocket);
+        ClientRooms.TryRemove(clientSocket, out _);
+        Log($"客户端 {clientSocket.RemoteEndPoint} 已离开房间 {currentRoomId}");
+
+        // 如果目标房间不存在，则创建目标房间
+        if (!Rooms.ContainsKey(newRoomId))
+        {
+            Rooms[newRoomId] = new Room(newRoomId);  // 创建目标房间
+            Log($"房间 {newRoomId} 创建成功.");
+        }
+
+        // 将客户端加入到目标房间
+        Rooms[newRoomId].AddClient(clientSocket);
+        ClientRooms[clientSocket] = newRoomId;
+        Log($"客户端 {clientSocket.RemoteEndPoint} 已加入房间 {newRoomId}");
+
+        return true;  // 成功切换房间
+    }
+
+    #endregion
+
     public static byte[] PrepareMessage(string message)
     {
         byte[] header = Encoding.UTF8.GetBytes("HEADER");
@@ -482,13 +555,33 @@ public class NetworkMessage
 
 public enum NetworkMessageType
 {
-    PositionUpdate,
-    CharacterAction,
+    /// <summary>
+    /// 位置更新
+    /// </summary>
+    TransformUpdate,
+    /// <summary>
+    /// 状态
+    /// </summary>
+    Status,
+    /// <summary>
+    /// 物体产生
+    /// </summary>
     ObjectSpawn,
-
+    /// <summary>
+    /// 新客户端加入的消息
+    /// </summary>
     ClientConnect,
-    ClientDisconnect
+    /// <summary>
+    /// 客户端退出
+    /// </summary>
+    ClientDisconnect,
+
+
+    JoinRoom,
+    LeaveRoom,
+    SwitchRoom
 }
+
 
 
 public class CircularBuffer
