@@ -1,5 +1,4 @@
 ﻿//// See https://aka.ms/new-console-template for more information
-//Console.WriteLine("Hello, World!");
 
 using System;
 using System.Collections.Concurrent;
@@ -19,7 +18,7 @@ public class GameServer
     private static int clientIdCounter = 1;
     private const int Port = 12345;
     private const int BufferSize = 1024;
-    private const int maxClientCount = 30;
+    private const int maxClientCount = 50;
     private static readonly string LogFilePath = "server_log.txt"; // 日志文件路径
 
     private static readonly ConcurrentQueue<NetworkMessage> MessageQueue = new();  
@@ -95,13 +94,16 @@ public class GameServer
                 Clients[clientKey] = clientSocket;
                 int clientId = clientIdCounter++;
                 ClientIds[clientSocket] = clientId;
-
                 Log($"客户端连接: {clientSocket.RemoteEndPoint}，客户端ID: {clientId}");
-
 
                 byte[] idMessage = Encoding.UTF8.GetBytes(clientId.ToString());
                 await clientSocket.SendAsync(new ArraySegment<byte>(idMessage), SocketFlags.None);
                 Log($"已向 {clientSocket.RemoteEndPoint} 发送客户端ID: {clientId}");
+
+
+                // 新客户端连接服务器时 广播给所有客户端
+                await BroadcastClientConnect(clientSocket, NetworkMessageType.ClientConnect);
+
 
                 _ = Task.Run(() => HandleClient(clientSocket));
             }
@@ -128,7 +130,7 @@ public class GameServer
                 if ((DateTime.Now - lastHeartbeat) > heartbeatInterval)
                 {
                     Log($"心跳超时， {ClientIds[clientSocket]}: {clientSocket.RemoteEndPoint} 断开连接 ... ");
-                    await BroadcastClientDisconnect(clientSocket); // 客户端断开时广播
+                    await BroadcastClientConnect(clientSocket , NetworkMessageType.ClientDisconnect ); // 客户端断开时广播
                     clientSocket.Close(); 
                     break;
                 }
@@ -141,10 +143,11 @@ public class GameServer
                     var clientEndPoint = clientSocket.RemoteEndPoint;
                     var clientId = ClientIds[clientSocket];
                     Log($"客户端 {clientId}: {clientEndPoint} 主动断开连接");
-                    await BroadcastClientDisconnect(clientSocket); // 客户端主动断开时广播
+                    await BroadcastClientConnect(clientSocket, NetworkMessageType.ClientDisconnect); // 客户端主动断开时广播
                     RemoveClient(clientSocket);
                     break;
                 }
+
 
                 // 将接收到的数据写入环形缓冲区
                 dataBuffer.Write(buffer, 0, bytesReceived);
@@ -287,45 +290,26 @@ public class GameServer
         await Task.WhenAll(tasks);
         Log(" ------------------------广播结束------------------------");
     }
-    public static async Task BroadcastClientDisconnect(Socket disconnectedClientSocket)
+    public static async Task BroadcastClientConnect(Socket connectedClientSocket  , NetworkMessageType connectType )
     {
-        NetworkMessageType _type = NetworkMessageType.ClientDisconnect;
-        string disconnectMessage = $"客户端已断开连接 {disconnectedClientSocket.RemoteEndPoint}___{ClientIds[disconnectedClientSocket]}";
-        byte[] messageBytes = Encoding.UTF8.GetBytes(disconnectMessage);
-        NetworkMessage disconnectMsg = new NetworkMessage(_type, messageBytes);
-        byte[] combinedMessage = PrepareNetworkMessage(disconnectMsg);
-
-        Log(" ------------------------客户端断开------------------------");
-        foreach (var kvp in Clients)
+        NetworkMessageType _type = connectType;
+        string disconnectMessage = "";
+        switch (connectType)
         {
-            var clientSocket = kvp.Value;
-
-            // 确保不要广播给自己
-            if (clientSocket != disconnectedClientSocket)
-            {
-                try
-                {
-                    if (clientSocket.Connected)
-                    {
-                        await clientSocket.SendAsync(new ArraySegment<byte>(combinedMessage), SocketFlags.None);
-                        Log($"广播客户端断开消息给客户端: {kvp.Key}");
-                    }
-                    else
-                    {
-                        Log($"检测到断开的客户端: {kvp.Key}");
-                        Clients.TryRemove(kvp.Key, out _);
-                        ClientIds.TryRemove(clientSocket, out _);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Log($"广播消息失败: {ex.Message}");
-                    Clients.TryRemove(kvp.Key, out _);
-                    ClientIds.TryRemove(clientSocket, out _);
-                }
-            }
+            case NetworkMessageType.ClientConnect:
+                disconnectMessage = $"客户端已连接到服务器 {ClientIds[connectedClientSocket]}";
+                break;
+            case NetworkMessageType.ClientDisconnect:
+                 //disconnectMessage = $"客户端已断开连接 {disconnectedClientSocket.RemoteEndPoint}___{ClientIds[disconnectedClientSocket]}";
+                 disconnectMessage = $"客户端已断开连接 {ClientIds[connectedClientSocket]}";
+                break;
+            default:
+                break;
         }
-        Log(" ------------------------客户端断开结束------------------------");
+        byte[] messageBytes = Encoding.UTF8.GetBytes(disconnectMessage);
+        NetworkMessage connectMsg = new NetworkMessage(_type, messageBytes);
+
+        await BroadcastNetworkMessage(connectedClientSocket, connectMsg);
     }
 
 
@@ -502,6 +486,7 @@ public enum NetworkMessageType
     CharacterAction,
     ObjectSpawn,
 
+    ClientConnect,
     ClientDisconnect
 }
 
