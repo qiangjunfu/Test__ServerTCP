@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Collections.Generic;
 using System.IO;
+using Newtonsoft.Json;
 
 
 public class GameServer
@@ -21,7 +22,7 @@ public class GameServer
     private const int maxClientCount = 50;
     private static readonly string LogFilePath = "server_log.txt"; // 日志文件路径
 
-    private static readonly ConcurrentQueue<NetworkMessage> MessageQueue = new();  
+    private static readonly ConcurrentQueue<NetworkMessage> MessageQueue = new();
     private static readonly int FrameRate = 60;
 
 
@@ -45,7 +46,7 @@ public class GameServer
         while (true)
         {
             await Task.Delay(frameInterval);
-           
+
             await ProcessQueuedMessages();
         }
     }
@@ -62,10 +63,10 @@ public class GameServer
                 }
                 Log($"MessageQueue  tasksCount : {tasks.Count} ");
 
-                await Task.WhenAll(tasks);  
+                await Task.WhenAll(tasks);
             }
 
-            await Task.Delay(10); 
+            await Task.Delay(10);
         }
     }
 
@@ -97,8 +98,9 @@ public class GameServer
 
                 string clientKey = $"{clientSocket.RemoteEndPoint}___{clientIdCounter}";
                 Clients[clientKey] = clientSocket;
-                int clientId = clientIdCounter++;
+                int clientId = clientIdCounter;
                 ClientIds[clientSocket] = clientId;
+                clientIdCounter += 1;
                 Log($"客户端连接: {clientSocket.RemoteEndPoint}，客户端ID: {clientId}");
 
                 byte[] idMessage = Encoding.UTF8.GetBytes(clientId.ToString());
@@ -106,8 +108,7 @@ public class GameServer
                 Log($"已向 {clientSocket.RemoteEndPoint} 发送客户端ID: {clientId}");
 
 
-                // 新客户端连接服务器时 广播给所有客户端
-                await BroadcastClientConnect(clientSocket, NetworkMessageType.ClientConnect);
+                await JoinRoom(clientSocket, defaultRoomId);
 
 
                 _ = Task.Run(() => HandleClient(clientSocket));
@@ -134,9 +135,9 @@ public class GameServer
             {
                 if ((DateTime.Now - lastHeartbeat) > heartbeatInterval)
                 {
-                    Log($"心跳超时， {ClientIds[clientSocket]}: {clientSocket.RemoteEndPoint} 断开连接 ... ");
-                    await BroadcastClientConnect(clientSocket , NetworkMessageType.ClientDisconnect ); // 客户端断开时广播
-                    clientSocket.Close(); 
+                    Log($"心跳超时，{GetClientIdPoint(clientSocket)} 断开连接 ... ");
+                    await LeaveRoom(clientSocket);  // 离开房间
+                    RemoveClient(clientSocket);
                     break;
                 }
 
@@ -147,8 +148,8 @@ public class GameServer
                 {
                     var clientEndPoint = clientSocket.RemoteEndPoint;
                     var clientId = ClientIds[clientSocket];
-                    Log($"客户端 {clientId}: {clientEndPoint} 主动断开连接");
-                    await BroadcastClientConnect(clientSocket, NetworkMessageType.ClientDisconnect); // 客户端主动断开时广播
+                    Log($"客户端 {GetClientIdPoint(clientSocket)} 主动断开连接");
+                    await LeaveRoom(clientSocket);  // 离开房间
                     RemoveClient(clientSocket);
                     break;
                 }
@@ -195,10 +196,28 @@ public class GameServer
                     {
                         if (TryParseNetworkMessage(body, out NetworkMessage networkMessage))
                         {
-                            Log($"收到来自客户端 {clientSocket.RemoteEndPoint}___{ClientIds[clientSocket]} NetworkMessage: 类型={networkMessage.MessageType}");
-                            MessageQueue.Enqueue(networkMessage); 
+                            string roomId = "";
+                            switch (networkMessage.MessageType)
+                            {
+                                case NetworkMessageType.JoinRoom:
+                                    break;
+                                case NetworkMessageType.LeaveRoom:
+                                    //RoomMessage roomMessage2 = HandleRoomMessage(networkMessage.Data);
+                                    //await SwitchRoom(clientSocket, roomMessage2.roomId);
+                                    break;
+                                case NetworkMessageType.SwitchRoom:
+                                    RoomMessage roomMessage = HandleRoomMessage(networkMessage.Data);
+                                    await SwitchRoom(clientSocket, roomMessage.roomId);
+                                    break;
+                                default:
+                                    Log($"收到来自客户端 {GetClientIdPoint(clientSocket)} NetworkMessage: 类型={networkMessage.MessageType}");
+                                    MessageQueue.Enqueue(networkMessage);
+                                    break;
+                            }
                         }
-                        //await ProcessMessage(clientSocket, body);
+                        //Log($"收到来自客户端 {GetClientIdPoint(clientSocket)} NetworkMessage: 类型={networkMessage.MessageType}");
+                        //MessageQueue.Enqueue(networkMessage);
+                        ////await ProcessMessage(clientSocket, body);
                     }
                 }
             }
@@ -219,19 +238,27 @@ public class GameServer
     {
         if (TryParseNetworkMessage(message, out NetworkMessage networkMessage))
         {
-            Log($"收到来自客户端 {clientSocket.RemoteEndPoint}___{ClientIds[clientSocket]} NetworkMessage: 类型={networkMessage.MessageType}");
+            Log($"收到来自客户端 {GetClientIdPoint(clientSocket)} NetworkMessage: 类型={networkMessage.MessageType}");
             await BroadcastNetworkMessage(clientSocket, networkMessage);
         }
         else
         {
             string receivedMessage = Encoding.UTF8.GetString(message);
-            Log($"收到来自客户端 {clientSocket.RemoteEndPoint}___{ClientIds[clientSocket]} 的消息: {receivedMessage}");
+            Log($"收到来自客户端 {GetClientIdPoint(clientSocket)} 的消息: {receivedMessage}");
             await BroadcastMessage(clientSocket, receivedMessage);
         }
     }
 
     public static async Task BroadcastMessage(Socket senderSocket, string message)
     {
+        string senderRoomId;
+        if (!ClientRooms.TryGetValue(senderSocket, out senderRoomId) || senderRoomId == null)
+        {
+            Log($"客户端 {senderSocket.RemoteEndPoint} 不在任何房间中，无法广播消息");
+            return;
+        }
+
+
         byte[] combinedMessage = PrepareMessage(message);
 
         Log(" ------------------------广播开始------------------------");
@@ -242,7 +269,7 @@ public class GameServer
 
             try
             {
-                if (clientSocket.Connected)
+                if (clientSocket.Connected && ClientRooms.ContainsKey(clientSocket) && ClientRooms[clientSocket] == senderRoomId)
                 {
                     await clientSocket.SendAsync(new ArraySegment<byte>(combinedMessage), SocketFlags.None);
                     Log($"广播消息给客户端: {clientKey}");
@@ -265,16 +292,22 @@ public class GameServer
     }
     public static async Task BroadcastNetworkMessage(Socket senderSocket, NetworkMessage networkMessage)
     {
-        byte[] combinedMessage = PrepareNetworkMessage(networkMessage);
+        string senderRoomId;
+        if (!ClientRooms.TryGetValue(senderSocket, out senderRoomId) || senderRoomId == null)
+        {
+            Log($"客户端 {senderSocket.RemoteEndPoint}___{ClientIds[senderSocket]} 不在任何房间中，无法广播消息");
+            return;
+        }
 
-        Log(" ------------------------广播开始------------------------");
+        byte[] combinedMessage = PrepareNetworkMessage(networkMessage);
+        Log($" ------------------------广播开始: {networkMessage.MessageType.ToString()}------------------------");
         var tasks = new List<Task>();
         foreach (var kvp in Clients)
         {
             var clientKey = kvp.Key;
             var clientSocket = kvp.Value;
 
-            if (clientSocket.Connected)
+            if (clientSocket.Connected && ClientRooms.ContainsKey(clientSocket) && ClientRooms[clientSocket] == senderRoomId)
             {
                 tasks.Add(Task.Run(async () =>
                 {
@@ -295,97 +328,109 @@ public class GameServer
         await Task.WhenAll(tasks);
         Log(" ------------------------广播结束------------------------");
     }
-    public static async Task BroadcastClientConnect(Socket connectedClientSocket  , NetworkMessageType connectType )
+    public static async Task BroadcastClientJoinOrLeave(Socket clientSocket, string roomId, bool isJoin)
     {
-        NetworkMessageType _type = connectType;
-        string disconnectMessage = "";
-        switch (connectType)
+        NetworkMessageType _type = isJoin ? NetworkMessageType.JoinRoom : NetworkMessageType.LeaveRoom;
+        byte[] message = Encoding.UTF8.GetBytes(roomId);
+        NetworkMessage networkMessage = new NetworkMessage(_type, message);
+        byte[] combinedMessage = PrepareNetworkMessage(networkMessage);
+
+        Log($" ------------------------广播房间消息: {_type.ToString()} {roomId}------------------------");
+        Room room = Rooms[roomId];
+        List<Task> tasks = new List<Task>();
+        foreach (var client in room.Clients)
         {
-            case NetworkMessageType.ClientConnect:
-                disconnectMessage = $"客户端已连接到服务器 {ClientIds[connectedClientSocket]}";
-                break;
-            case NetworkMessageType.ClientDisconnect:
-                 //disconnectMessage = $"客户端已断开连接 {disconnectedClientSocket.RemoteEndPoint}___{ClientIds[disconnectedClientSocket]}";
-                 disconnectMessage = $"客户端已断开连接 {ClientIds[connectedClientSocket]}";
-                break;
-            default:
-                break;
+            if (client != clientSocket)
+            {
+                // 不发送给自己
+                tasks.Add(Task.Run(async () =>
+                {
+                    try
+                    {
+                        await clientSocket.SendAsync(new ArraySegment<byte>(combinedMessage), SocketFlags.None);
+                        Log($"广播消息给客户端: {GetClientIdPoint(clientSocket)}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Log($"广播到客户端 {GetClientIdPoint(clientSocket)} 失败: {ex.Message}");
+                        RemoveClient(clientSocket);
+                    }
+                }));
+            }
         }
-        byte[] messageBytes = Encoding.UTF8.GetBytes(disconnectMessage);
-        NetworkMessage connectMsg = new NetworkMessage(_type, messageBytes);
-
-        await BroadcastNetworkMessage(connectedClientSocket, connectMsg);
+        await Task.WhenAll(tasks);
+        Log(" ------------------------广播房间消息结束------------------------");
     }
-
 
 
     #region 房间管理
-    public static void JoinRoom(Socket clientSocket, string roomId)
+    static string defaultRoomId = "defaultRoom";
+
+    public static async Task JoinRoom(Socket clientSocket, string roomId)
     {
         if (!Rooms.ContainsKey(roomId))
         {
-            Rooms[roomId] = new Room(roomId);  // 创建新房间
+            Rooms[roomId] = new Room(roomId);
             Log($"房间 {roomId} 不存在 , 创建房间 .");
         }
 
-        // 将客户端加入到房间
         Rooms[roomId].AddClient(clientSocket);
         ClientRooms[clientSocket] = roomId;  // 记录客户端所属的房间
-        Log($"客户端 {clientSocket.RemoteEndPoint} 已加入房间 {roomId}");
+        Log($"客户端 {GetClientIdPoint(clientSocket)} 已加入房间 {roomId}");
+
+        await BroadcastClientJoinOrLeave(clientSocket, roomId, true);
     }
 
-    public static bool LeaveRoom(Socket clientSocket)
+    public static async Task<bool> LeaveRoom(Socket clientSocket)
     {
         if (!ClientRooms.ContainsKey(clientSocket))
         {
-            Log($"客户端 {clientSocket.RemoteEndPoint} 没有加入任何房间.");
-            return false;  // 客户端没有加入房间
-        }
-
-        string roomId = ClientRooms[clientSocket];
-        var room = Rooms[roomId];
-
-        room.RemoveClient(clientSocket);  // 从房间中移除客户端
-        ClientRooms.TryRemove(clientSocket, out _);  // 移除客户端的房间记录
-        clientSocket.Close();  // 关闭客户端连接（可以选择是否关闭连接）
-
-        Log($"客户端 {clientSocket.RemoteEndPoint} 已离开房间 {roomId}");
-        return true;  // 成功离开房间
-    }
-
-    public static bool SwitchRoom(Socket clientSocket, string newRoomId)
-    {
-        if (!ClientRooms.ContainsKey(clientSocket))
-        {
-            Log($"客户端 {clientSocket.RemoteEndPoint} 没有加入任何房间，无法切换场景。");
+            Log($"客户端 {GetClientIdPoint(clientSocket)}  没有加入任何房间.");
             return false;
         }
 
-        // 获取当前客户端所在的房间
-        string currentRoomId = ClientRooms[clientSocket];
+        string currentRoomId = ClientRooms[clientSocket];  // 记录当前房间
         var currentRoom = Rooms[currentRoomId];
 
-        // 从当前房间移除客户端
-        currentRoom.RemoveClient(clientSocket);
-        ClientRooms.TryRemove(clientSocket, out _);
-        Log($"客户端 {clientSocket.RemoteEndPoint} 已离开房间 {currentRoomId}");
+        currentRoom.RemoveClient(clientSocket);  // 从房间中移除客户端
+        ClientRooms.TryRemove(clientSocket, out _);  // 移除客户端的房间记录
+        await BroadcastClientJoinOrLeave(clientSocket, currentRoomId, false); // 异步广播客户端离开房间
 
-        // 如果目标房间不存在，则创建目标房间
-        if (!Rooms.ContainsKey(newRoomId))
-        {
-            Rooms[newRoomId] = new Room(newRoomId);  // 创建目标房间
-            Log($"房间 {newRoomId} 创建成功.");
-        }
+        //await JoinRoom(clientSocket, defaultRoomId);        // 将客户端加入默认大厅房间
+        Log($"客户端 {GetClientIdPoint(clientSocket)} 已离开房间 {currentRoomId} , 并重新加入大厅房间 {defaultRoomId}");
 
-        // 将客户端加入到目标房间
-        Rooms[newRoomId].AddClient(clientSocket);
-        ClientRooms[clientSocket] = newRoomId;
-        Log($"客户端 {clientSocket.RemoteEndPoint} 已加入房间 {newRoomId}");
-
-        return true;  // 成功切换房间
+        return true;
     }
 
+    public static async Task<bool> SwitchRoom(Socket clientSocket, string newRoomId)
+    {
+        if (!ClientRooms.ContainsKey(clientSocket))
+        {
+            Log($"客户端 {GetClientIdPoint(clientSocket)} 没有加入任何房间，无法切换房间。");
+            return false;
+        }
+
+        string currentRoomId = ClientRooms[clientSocket];  // 记录当前房间
+        var currentRoom = Rooms[currentRoomId];
+
+        currentRoom.RemoveClient(clientSocket);  // 从当前房间移除客户端
+        ClientRooms.TryRemove(clientSocket, out _);  // 移除客户端的房间记录
+        await BroadcastClientJoinOrLeave(clientSocket, currentRoomId, false); // 异步广播客户端离开房间
+
+        await JoinRoom(clientSocket, newRoomId);  // 将客户端加入到新房间
+        Log($"客户端 {GetClientIdPoint(clientSocket)} 已从房间:{currentRoomId} 切换到房间:{newRoomId}");
+        return true;
+    }
+
+    public static RoomMessage HandleRoomMessage(byte[] data)
+    {
+        string jsonMessage = System.Text.Encoding.UTF8.GetString(data);
+        RoomMessage roomMessage = JsonConvert.DeserializeObject<RoomMessage>(jsonMessage);
+        roomMessage?.PrintInfo();
+        return roomMessage;
+    }
     #endregion
+
 
     public static byte[] PrepareMessage(string message)
     {
@@ -428,6 +473,7 @@ public class GameServer
             {
                 var clientKey = $"{clientSocket.RemoteEndPoint}___{clientId}";
                 Clients.TryRemove(clientKey, out _);
+                //ClientIds.TryRemove(clientSocket, out _);
                 clientSocket.Dispose();
                 Log($"客户端 {clientKey} 已断开连接并清理资源。");
             }
@@ -440,7 +486,7 @@ public class GameServer
         //var clientEndPoint = clientSocket.RemoteEndPoint; // 提前保存
         //var clientId = ClientIds[clientSocket];
 
-        //var clientKey = $"{clientSocket.RemoteEndPoint}___{ClientIds[clientSocket]}";
+        //var clientKey = $"{GetClientIdPoint(clientSocket)}";
         //if (Clients.ContainsKey(clientKey))
         //{
         //    Clients.TryRemove(clientKey, out _);
@@ -481,6 +527,10 @@ public class GameServer
 
 
 
+    public static string GetClientIdPoint(Socket clientSocket)
+    {
+        return $"{clientSocket.RemoteEndPoint}___{ClientIds[clientSocket]}";
+    }
     public static string GetLocalIPAddress()
     {
         foreach (var ip in Dns.GetHostAddresses(Dns.GetHostName()))
@@ -541,46 +591,6 @@ public class GameServer
 
 }
 
-public class NetworkMessage
-{
-    public NetworkMessageType MessageType { get; }
-    public byte[] Data { get; }
-
-    public NetworkMessage(NetworkMessageType messageType, byte[] data)
-    {
-        MessageType = messageType;
-        Data = data;
-    }
-}
-
-public enum NetworkMessageType
-{
-    /// <summary>
-    /// 位置更新
-    /// </summary>
-    TransformUpdate,
-    /// <summary>
-    /// 状态
-    /// </summary>
-    Status,
-    /// <summary>
-    /// 物体产生
-    /// </summary>
-    ObjectSpawn,
-    /// <summary>
-    /// 新客户端加入的消息
-    /// </summary>
-    ClientConnect,
-    /// <summary>
-    /// 客户端退出
-    /// </summary>
-    ClientDisconnect,
-
-
-    JoinRoom,
-    LeaveRoom,
-    SwitchRoom
-}
 
 
 
