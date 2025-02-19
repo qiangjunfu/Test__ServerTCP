@@ -22,7 +22,8 @@ public class GameServer
     private const int maxClientCount = 50;
     private static readonly string LogFilePath = "server_log.txt"; // 日志文件路径
 
-    private static readonly ConcurrentQueue<NetworkMessage> MessageQueue = new();
+
+    private static readonly ConcurrentQueue<MessageWithSender> MessageQueue = new();
     private static readonly int FrameRate = 60;
 
 
@@ -57,9 +58,9 @@ public class GameServer
             if (!MessageQueue.IsEmpty)
             {
                 var tasks = new List<Task>();
-                while (MessageQueue.TryDequeue(out NetworkMessage networkMessage))
+                while (MessageQueue.TryDequeue(out MessageWithSender? messageWithSender))
                 {
-                    tasks.Add(BroadcastNetworkMessage(null, networkMessage));
+                    tasks.Add(BroadcastNetworkMessage(messageWithSender.SenderSocket, messageWithSender.Message));
                 }
                 Log($"MessageQueue  tasksCount : {tasks.Count} ");
 
@@ -194,10 +195,12 @@ public class GameServer
                     }
                     else
                     {
-                        if (TryParseNetworkMessage(body, out NetworkMessage networkMessage))
+                        if (TryParseNetworkMessage(body, out NetworkMessage? networkMessage))
                         {
+                            if (networkMessage == null) return;
+
                             string roomId = "";
-                            switch (networkMessage.MessageType)
+                            switch (networkMessage?.MessageType)
                             {
                                 case NetworkMessageType.JoinRoom:
                                     break;
@@ -207,11 +210,15 @@ public class GameServer
                                     break;
                                 case NetworkMessageType.SwitchRoom:
                                     RoomMessage roomMessage = HandleRoomMessage(networkMessage.Data);
-                                    await SwitchRoom(clientSocket, roomMessage.roomId);
+                                    if (roomMessage != null && roomMessage.roomId != null)
+                                    {
+                                        await SwitchRoom(clientSocket, roomMessage.roomId);
+                                    }
                                     break;
                                 default:
                                     Log($"收到来自客户端 {GetClientIdPoint(clientSocket)} NetworkMessage: 类型={networkMessage.MessageType}");
-                                    MessageQueue.Enqueue(networkMessage);
+                                    // 在接收消息时，把发送者和消息一起入队
+                                    MessageQueue.Enqueue(new MessageWithSender(clientSocket, networkMessage));
                                     break;
                             }
                         }
@@ -252,9 +259,14 @@ public class GameServer
     public static async Task BroadcastMessage(Socket senderSocket, string message)
     {
         string senderRoomId;
-        if (!ClientRooms.TryGetValue(senderSocket, out senderRoomId) || senderRoomId == null)
+        if (senderSocket != null && ClientRooms.ContainsKey(senderSocket))
         {
-            Log($"客户端 {senderSocket.RemoteEndPoint} 不在任何房间中，无法广播消息");
+            senderRoomId = ClientRooms[senderSocket];  // 如果包含，直接取值
+        }
+        else
+        {
+            Log($"客户端 {senderSocket?.RemoteEndPoint} 不在房间列表中");
+            //senderRoomId = "defaultRoom";  // 默认值
             return;
         }
 
@@ -293,9 +305,14 @@ public class GameServer
     public static async Task BroadcastNetworkMessage(Socket senderSocket, NetworkMessage networkMessage)
     {
         string senderRoomId;
-        if (!ClientRooms.TryGetValue(senderSocket, out senderRoomId) || senderRoomId == null)
+        if (senderSocket != null && ClientRooms.ContainsKey(senderSocket))
         {
-            Log($"客户端 {senderSocket.RemoteEndPoint}___{ClientIds[senderSocket]} 不在任何房间中，无法广播消息");
+            senderRoomId = ClientRooms[senderSocket];  // 如果包含，直接取值
+        }
+        else
+        {
+            Log($"客户端 {senderSocket?.RemoteEndPoint} 不在房间列表中");
+            //senderRoomId = "defaultRoom";  // 默认值
             return;
         }
 
@@ -397,7 +414,8 @@ public class GameServer
         await BroadcastClientJoinOrLeave(clientSocket, currentRoomId, false); // 异步广播客户端离开房间
 
         //await JoinRoom(clientSocket, defaultRoomId);        // 将客户端加入默认大厅房间
-        Log($"客户端 {GetClientIdPoint(clientSocket)} 已离开房间 {currentRoomId} , 并重新加入大厅房间 {defaultRoomId}");
+        //Log($"客户端 {GetClientIdPoint(clientSocket)} 已离开房间 {currentRoomId} , 并重新加入大厅房间 {defaultRoomId}");
+        Log($"客户端 {GetClientIdPoint(clientSocket)} 已离开房间 {currentRoomId} ");
 
         return true;
     }
@@ -544,7 +562,7 @@ public class GameServer
     }
 
 
-    public static bool TryParseNetworkMessage(byte[] message, out NetworkMessage networkMessage)
+    public static bool TryParseNetworkMessage(byte[] message, out NetworkMessage? networkMessage)
     {
         try
         {
@@ -592,6 +610,18 @@ public class GameServer
 }
 
 
+
+public class MessageWithSender
+{
+    public Socket SenderSocket { get; }
+    public NetworkMessage Message { get; }
+
+    public MessageWithSender(Socket senderSocket, NetworkMessage message)
+    {
+        SenderSocket = senderSocket;
+        Message = message;
+    }
+}
 
 
 public class CircularBuffer
