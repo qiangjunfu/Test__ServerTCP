@@ -1,0 +1,72 @@
+{
+  "Version": 1,
+  "WorkspaceRootPath": "D:\\Csharp\\GameServer\\",
+  "Documents": [
+    {
+      "AbsoluteMoniker": "D:0:0:{5B61C9F6-6FD4-4DA9-AE14-DAE8A1CE17EF}|GameServer.csproj|d:\\csharp\\gameserver\\program.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{5B61C9F6-6FD4-4DA9-AE14-DAE8A1CE17EF}|GameServer.csproj|solutionrelative:program.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{5B61C9F6-6FD4-4DA9-AE14-DAE8A1CE17EF}|GameServer.csproj|d:\\csharp\\gameserver\\networkmessage.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{5B61C9F6-6FD4-4DA9-AE14-DAE8A1CE17EF}|GameServer.csproj|solutionrelative:networkmessage.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{5B61C9F6-6FD4-4DA9-AE14-DAE8A1CE17EF}|GameServer.csproj|d:\\csharp\\gameserver\\room.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{5B61C9F6-6FD4-4DA9-AE14-DAE8A1CE17EF}|GameServer.csproj|solutionrelative:room.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    }
+  ],
+  "DocumentGroupContainers": [
+    {
+      "Orientation": 0,
+      "VerticalTabListWidth": 256,
+      "DocumentGroups": [
+        {
+          "DockedWidth": 200,
+          "SelectedChildIndex": 0,
+          "Children": [
+            {
+              "$type": "Document",
+              "DocumentIndex": 0,
+              "Title": "Program.cs",
+              "DocumentMoniker": "D:\\Csharp\\GameServer\\Program.cs",
+              "RelativeDocumentMoniker": "Program.cs",
+              "ToolTip": "D:\\Csharp\\GameServer\\Program.cs",
+              "RelativeToolTip": "Program.cs",
+              "ViewState": "AgIAAAIBAAAAAAAAAIA4wDoBAAAzAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2025-02-19T06:16:05.146Z",
+              "IsPinned": true,
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 1,
+              "Title": "NetworkMessage.cs",
+              "DocumentMoniker": "D:\\Csharp\\GameServer\\NetworkMessage.cs",
+              "RelativeDocumentMoniker": "NetworkMessage.cs",
+              "ToolTip": "D:\\Csharp\\GameServer\\NetworkMessage.cs",
+              "RelativeToolTip": "NetworkMessage.cs",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2025-02-19T06:16:07.986Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 2,
+              "Title": "Room.cs",
+              "DocumentMoniker": "D:\\Csharp\\GameServer\\Room.cs",
+              "RelativeDocumentMoniker": "Room.cs",
+              "ToolTip": "D:\\Csharp\\GameServer\\Room.cs",
+              "RelativeToolTip": "Room.cs",
+              "ViewState": "AgIAAAAAAAAAAAAAAADwvwAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2025-02-19T06:16:06.935Z",
+              "EditorCaption": ""
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "dgSpecHash": "Xg4cp4teNAs=",
+  "success": true,
+  "projectFilePath": "D:\\Csharp\\GameServer\\GameServer.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\fqj\\.nuget\\packages\\newtonsoft.json\\13.0.3\\newtonsoft.json.13.0.3.nupkg.sha512"
+  ],
+  "logs": []
+}
